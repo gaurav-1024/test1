@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drawing App with Editable Text</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }
+        canvas {
+            border: 1px solid black;
+            cursor: crosshair;
+            display: block;
+        }
+        #toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            display: flex;
+            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+        }
+        button {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <button id="penTool">Pen</button>
+        <button id="eraserTool">Eraser</button>
+        <button id="fadeInkTool">Fading Ink</button>
+        <button id="rectTool">Rectangle</button>
+        <button id="textTool">Text</button>
+        <button id="clearCanvas">Clear</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let tool = 'pen';
+        let startX, startY;
+        let fadeTimeout;
+        let fadeInterval;
+        let drawnLines = [];
+        let permanentLines = [];
+        let currentRectangle = null;
+        let typing = false;
+        let textObjects = []; // Array to store text objects
+
+        // Set canvas size to full window size
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            renderLines(); // Re-render lines after resize
+        }
+
+        // Tool selection
+        document.getElementById('penTool').addEventListener('click', () => tool = 'pen');
+        document.getElementById('eraserTool').addEventListener('click', () => tool = 'eraser');
+        document.getElementById('fadeInkTool').addEventListener('click', () => tool = 'fadeInk');
+        document.getElementById('rectTool').addEventListener('click', () => tool = 'rectangle');
+        document.getElementById('textTool').addEventListener('click', () => tool = 'text');
+        document.getElementById('clearCanvas').addEventListener('click', clearCanvas);
+
+        // Mouse events
+        canvas.addEventListener('mousedown', (e) => {
+            drawing = true;
+            startX = e.offsetX;
+            startY = e.offsetY;
+            if (tool === 'rectangle') {
+                currentRectangle = { x: startX, y: startY, width: 0, height: 0 };
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!drawing) return;
+            const x = e.offsetX;
+            const y = e.offsetY;
+
+            if (tool === 'pen') {
+                drawLine(startX, startY, x, y);
+                permanentLines.push({ x1: startX, y1: startY, x2: x, y2: y });
+            } else if (tool === 'fadeInk') {
+                drawFadingLine(startX, startY, x, y);
+                drawnLines.push({ x1: startX, y1: startY, x2: x, y2: y, alpha: 1.0 });
+                resetFadeTimeout();
+            } else if (tool === 'eraser') {
+                erase(x, y);
+            } else if (tool === 'rectangle') {
+                currentRectangle.width = x - currentRectangle.x;
+                currentRectangle.height = y - currentRectangle.y;
+                renderLines();
+                drawRectangle(currentRectangle.x, currentRectangle.y, currentRectangle.width, currentRectangle.height);
+            }
+
+            startX = x;
+            startY = y;
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            drawing = false;
+            if (tool === 'rectangle') {
+                permanentLines.push({ 
+                    x1: currentRectangle.x, 
+                    y1: currentRectangle.y, 
+                    x2: currentRectangle.x + currentRectangle.width, 
+                    y2: currentRectangle.y + currentRectangle.height,
+                    type: 'rectangle'
+                });
+                currentRectangle = null;
+            }
+        });
+
+        // Text click for adding/editing text
+        canvas.addEventListener('click', (e) => {
+            const x = e.offsetX;
+            const y = e.offsetY;
+
+            if (tool === 'text') {
+                // Check if clicking on an existing text
+                const clickedText = textObjects.find(text => isWithinTextBounds(x, y, text));
+                if (clickedText) {
+                    const newText = prompt('Edit text:', clickedText.text);
+                    if (newText !== null) {
+                        clickedText.text = newText;
+                        renderLines();
+                    }
+                } else {
+                    const text = prompt('Enter text:');
+                    if (text) {
+                        const textObject = {
+                            text: text,
+                            x: x,
+                            y: y,
+                            font: '20px Arial',
+                            color: 'black'
+                        };
+                        textObjects.push(textObject);
+                        drawText(textObject);
+                    }
+                }
+            }
+        });
+
+        // Drawing functions
+        function drawLine(x1, y1, x2, y2, alpha = 1.0) {
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        function drawFadingLine(x1, y1, x2, y2, alpha = 0.8) {
+            ctx.lineWidth = 5; // Thicker stroke
+            ctx.strokeStyle = `rgba(255, 0, 0, ${alpha})`; // Red fading ink
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        function erase(x, y) {
+            ctx.clearRect(x - 10, y - 10, 20, 20);
+        }
+
+        function drawRectangle(x, y, width, height) {
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(x, y, width, height);
+        }
+
+        function drawText(textObj) {
+            ctx.font = textObj.font;
+            ctx.fillStyle = textObj.color;
+            ctx.fillText(textObj.text, textObj.x, textObj.y);
+        }
+
+        // Check if click is within text bounds
+        function isWithinTextBounds(x, y, textObj) {
+            const metrics = ctx.measureText(textObj.text);
+            const textWidth = metrics.width;
+            const textHeight = 20; // Approximate height of the text
+            return (
+                x >= textObj.x &&
+                x <= textObj.x + textWidth &&
+                y >= textObj.y - textHeight &&
+                y <= textObj.y
+            );
+        }
+
+        // Clear canvas
+        function clearCanvas(clearPermanent = true) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (clearPermanent) {
+                permanentLines.length = 0;
+                textObjects.length = 0;
+            }
+        }
+
+        // Redraw all permanent lines
+        function redrawPermanentLines() {
+            permanentLines.forEach(line => {
+                if (line.type === 'rectangle') {
+                    drawRectangle(line.x1, line.y1, line.x2 - line.x1, line.y2 - line.y1);
+                } else {
+                    drawLine(line.x1, line.y1, line.x2, line.y2);
+                }
+            });
+        }
+
+        // Redraw all text objects
+        function redrawTextObjects() {
+            textObjects.forEach(drawText);
+        }
+
+        // Fading logic
+        function fadeLines() {
+            if (drawnLines.length > 0) {
+                drawnLines.forEach((line) => {
+                    line.alpha -= 0.1; // Faster fading by decreasing alpha more quickly
+                });
+                drawnLines = drawnLines.filter(line => line.alpha > 0); // Remove fully faded lines
+                renderLines();
+            }
+        }
+
+        function resetFadeTimeout() {
+            clearTimeout(fadeTimeout);
+            clearInterval(fadeInterval); // Stop any ongoing fade
+
+            fadeTimeout = setTimeout(() => {
+                fadeInterval = setInterval(fadeLines, 100); // Start fading after 2 seconds of inactivity
+            }, 200);
+        }
+
+        // Render both permanent and fading lines
+        function renderLines() {
+            clearCanvas(false); // Don't clear permanent lines
+            redrawPermanentLines(); // Draw the non-fading lines
+            drawnLines.forEach((line) => {
+                drawFadingLine(line.x1, line.y1, line.x2, line.y2, line.alpha); // Draw fading lines
+            });
+            redrawTextObjects(); // Draw texts
+        }
+    </script>
+</body>
+</html>
